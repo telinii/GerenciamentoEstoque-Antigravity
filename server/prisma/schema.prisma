@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Role hierarchy: OWNER > ADMIN > MODERATOR > USER
+// OWNER:     acesso total (gerenciar tudo, incluindo outros ADMIN/OWNER)
+// ADMIN:     quase total (gerenciar funcionários exceto OWNERs, gerenciar estoque)
+// MODERATOR: moderado (criar funcionários com cargo USER, gerenciar estoque, ver lista de funcionários)
+// USER:      básico (apenas acesso ao próprio perfil, sem módulos administrativos)
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String
+  name                String
+  role                String    @default("USER") // OWNER | ADMIN | MODERATOR | USER
+  isActive            Boolean   @default(true)
+
+  isEmailVerified     Boolean   @default(false)
+  emailVerifyToken    String?   @unique
+  resetPasswordToken  String?   @unique
+  resetPasswordExpiry DateTime?
+
+  // Quem criou este funcionário (auditoria de criação)
+  createdById         String?
+  createdBy           User?     @relation("EmployeeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdEmployees    User[]    @relation("EmployeeCreatedBy")
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  sessions            Session[]
+  categories          Category[]
+  products            Product[]
+  movements           StockMovement[]
+  auditLogs           AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// Registro de auditoria para ações sensíveis
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorId     String
+  actor       User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  action      String   // CREATE_EMPLOYEE | UPDATE_ROLE | DEACTIVATE_EMPLOYEE | DELETE_EMPLOYEE
+  targetId    String?  // ID do recurso alvo (ex: id do funcionário afetado)
+  targetEmail String?  // Email do funcionário afetado (para auditoria mesmo após deleção)
+  details     String?  // JSON string com detalhes adicionais
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  color       String?   @default("#64748b")
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, name])
+}
+
+model Product {
+  id          String          @id @default(uuid())
+  sku         String
+  name        String
+  description String?
+  price       Float           @default(0.0)
+  costPrice   Float           @default(0.0)
+  quantity    Int             @default(0)
+  minQuantity Int             @default(5)
+  unit        String          @default("UN")
+  location    String?
+
+  categoryId  String?
+  category    Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  movements   StockMovement[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([userId, sku])
+}
+
+model StockMovement {
+  id               String   @id @default(uuid())
+  productId        String
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type             String   // IN | OUT | ADJUSTMENT | LOSS
+  quantity         Int
+  previousQuantity Int
+  newQuantity      Int
+  reason           String?
+
+  createdAt        DateTime @default(now())
+}
