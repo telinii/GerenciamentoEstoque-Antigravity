@@ -91,6 +91,56 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
+export const firebaseLogin = async (req: Request, res: Response) => {
+  try {
+    const { email, name, uid } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Cria usuário com role USER padrão caso seja o primeiro acesso
+      const salt = await bcrypt.genSalt(10);
+      const randomPassword = uid || Math.random().toString(36);
+      const passwordHash = await bcrypt.hash(randomPassword, salt);
+
+      user = await prisma.user.create({
+        data: {
+          name: name || email.split('@')[0],
+          email,
+          passwordHash,
+          role: 'USER',
+          isEmailVerified: true,
+          isActive: true
+        }
+      });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ error: 'Conta desativada. Contate o administrador.' });
+    }
+
+    const token = generateToken(user.id);
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    return res.json({
+      message: 'Logged in with Firebase successfully',
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive }
+    });
+  } catch (error) {
+    console.error('Firebase login error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const logout = (req: Request, res: Response) => {
   res.clearCookie('token');
   return res.json({ message: 'Logged out successfully' });

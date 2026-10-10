@@ -18,6 +18,9 @@ export const authApi = {
   login: (body: { email: string; password: string }) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
 
+  firebaseLogin: (body: { email: string; name: string; uid: string }) =>
+    request('/auth/firebase-login', { method: 'POST', body: JSON.stringify(body) }),
+
   logout: () =>
     request('/auth/logout', { method: 'POST' }),
 
