@@ -19,6 +19,10 @@ prisma/dev.db-journal
 dist/
 build/
 .output/
+lib/
+functions/lib/
+functions/node_modules/
+.firebase/
 
 # IDE / OS
 .DS_Store

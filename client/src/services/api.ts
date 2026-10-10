@@ -1,29 +1,27 @@
-const BASE_URL = 'http://localhost:3000/api';
+import { auth } from '../config/firebase';
 
-const request = async (path: string, options?: RequestInit) => {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include', // Sends HttpOnly cookies automatically
-    ...options,
-  });
+// Em produção (Firebase Hosting) usa /api (rewrite do firebase.json)
+// Em desenvolvimento usa o backend local ou emulator
+const IS_DEV = import.meta.env.DEV;
+export const API_BASE = IS_DEV
+  ? 'http://localhost:3000/api'          // backend Express local (dev)
+  : '/api';                              // Firebase Function via rewrite (prod)
+
+// Pega o ID token do usuário logado via Firebase Auth
+const getIdToken = async (): Promise<string | null> => {
+  const user = auth.currentUser;
+  if (!user) return null;
+  return user.getIdToken();
+};
+
+// Helper de requisição autenticada
+export const request = async (path: string, options?: RequestInit) => {
+  const token = await getIdToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers: { ...headers, ...(options?.headers || {}) } });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
-};
-
-export const authApi = {
-  register: (body: { name: string; email: string; password: string }) =>
-    request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
-
-  login: (body: { email: string; password: string }) =>
-    request('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
-
-  firebaseLogin: (body: { email: string; name: string; uid: string }) =>
-    request('/auth/firebase-login', { method: 'POST', body: JSON.stringify(body) }),
-
-  logout: () =>
-    request('/auth/logout', { method: 'POST' }),
-
-  me: () =>
-    request('/auth/me'),
 };

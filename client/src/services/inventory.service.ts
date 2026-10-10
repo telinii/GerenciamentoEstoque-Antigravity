@@ -1,26 +1,25 @@
-const BASE_URL = 'http://localhost:3000/api/inventory';
-
-const request = async (path: string, options?: RequestInit) => {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    ...options,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Erro na requisição');
-  return data;
-};
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  runTransaction,
+} from 'firebase/firestore';
+import { db, auth } from '../config/firebase';
 
 export interface Category {
   id: string;
   name: string;
   description?: string | null;
   color?: string | null;
-  _count?: {
-    products: number;
-  };
-  createdAt: string;
-  updatedAt: string;
+  _count?: { products: number };
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Product {
@@ -29,155 +28,266 @@ export interface Product {
   name: string;
   description?: string | null;
   price: number;
-  costPrice: number;
+  costPrice?: number | null;
   quantity: number;
-  minQuantity: number;
-  unit: string;
+  minQuantity?: number | null;
+  unit?: string | null;
   location?: string | null;
   categoryId?: string | null;
   category?: Category | null;
-  movements?: StockMovement[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface StockMovement {
-  id: string;
-  productId: string;
-  userId: string;
-  type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'LOSS';
-  quantity: number;
-  previousQuantity: number;
-  newQuantity: number;
-  reason?: string | null;
-  createdAt: string;
-  product?: {
-    id: string;
-    name: string;
-    sku: string;
-    unit: string;
-  };
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface InventoryStats {
   totalProducts: number;
   totalItemsInStock: number;
+  totalValue: number;
   totalStockValueCost: number;
   totalStockValueSale: number;
   lowStockCount: number;
   outOfStockCount: number;
 }
 
-export interface InventoryStatsResponse {
-  stats: InventoryStats;
-  recentMovements: StockMovement[];
+export interface StockMovement {
+  id: string;
+  productId: string;
+  type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'LOSS';
+  quantity: number;
+  previousQuantity: number;
+  newQuantity: number;
+  reason?: string | null;
+  createdAt?: string;
+}
+
+export interface CreateProductPayload {
+  sku: string;
+  name: string;
+  description?: string;
+  price: number;
+  costPrice?: number;
+  quantity: number;
+  minQuantity?: number;
+  unit?: string;
+  location?: string;
+  categoryId?: string | null;
 }
 
 export interface ProductFilters {
   search?: string;
   categoryId?: string;
-  status?: 'all' | 'low_stock' | 'out_of_stock' | 'in_stock';
-  sortBy?: 'name' | 'quantity' | 'price' | 'updatedAt';
-  order?: 'asc' | 'desc';
+  status?: string;
+  sort?: string;
+  sortBy?: string;
 }
 
 export const inventoryApi = {
   // Categorias
   getCategories: async (): Promise<{ categories: Category[] }> => {
-    return request('/categories');
-  },
+    const userId = auth.currentUser?.uid;
+    if (!userId) return { categories: [] };
 
-  createCategory: async (body: { name: string; description?: string; color?: string }): Promise<{ message: string; category: Category }> => {
-    return request('/categories', {
-      method: 'POST',
-      body: JSON.stringify(body),
+    const q = query(collection(db, 'categories'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+
+    const productsSnap = await getDocs(query(collection(db, 'products'), where('userId', '==', userId)));
+    const counts = new Map<string, number>();
+    productsSnap.docs.forEach((d) => {
+      const cid = d.data().categoryId;
+      if (cid) counts.set(cid, (counts.get(cid) || 0) + 1);
     });
+
+    const categories = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+      _count: { products: counts.get(d.id) || 0 },
+    })) as Category[];
+
+    return { categories };
   },
 
-  deleteCategory: async (id: string): Promise<{ message: string }> => {
-    return request(`/categories/${id}`, {
-      method: 'DELETE',
+  createCategory: async (payload: { name: string; description?: string; color?: string }): Promise<Category> => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('Não autenticado');
+
+    const ref = await addDoc(collection(db, 'categories'), {
+      ...payload,
+      userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     });
+    return { id: ref.id, ...payload, _count: { products: 0 } };
   },
 
-  // Estatísticas & Dashboard
-  getStats: async (): Promise<InventoryStatsResponse> => {
-    return request('/stats');
+  deleteCategory: async (id: string): Promise<void> => {
+    await deleteDoc(doc(db, 'categories', id));
   },
 
   // Produtos
   getProducts: async (filters?: ProductFilters): Promise<{ products: Product[] }> => {
-    const query = new URLSearchParams();
-    if (filters?.search) query.append('search', filters.search);
-    if (filters?.categoryId) query.append('categoryId', filters.categoryId);
-    if (filters?.status) query.append('status', filters.status);
-    if (filters?.sortBy) query.append('sortBy', filters.sortBy);
-    if (filters?.order) query.append('order', filters.order);
+    const userId = auth.currentUser?.uid;
+    if (!userId) return { products: [] };
 
-    const queryString = query.toString() ? `?${query.toString()}` : '';
-    return request(`/products${queryString}`);
+    let q = query(collection(db, 'products'), where('userId', '==', userId));
+
+    if (filters?.categoryId) {
+      q = query(collection(db, 'products'), where('userId', '==', userId), where('categoryId', '==', filters.categoryId));
+    }
+
+    const snap = await getDocs(q);
+    let products = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as Product[];
+
+    // Busca categorias para enriquecer
+    const { categories } = await inventoryApi.getCategories();
+    const catMap = new Map(categories.map((c) => [c.id, c]));
+
+    products = products.map((p) => ({
+      ...p,
+      category: p.categoryId ? catMap.get(p.categoryId) || null : null,
+    }));
+
+    // Filtros em memória
+    if (filters?.search) {
+      const s = filters.search.toLowerCase();
+      products = products.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(s) ||
+          p.sku?.toLowerCase().includes(s) ||
+          p.description?.toLowerCase().includes(s)
+      );
+    }
+
+    if (filters?.status === 'low') {
+      products = products.filter((p) => p.quantity > 0 && p.quantity <= (p.minQuantity || 0));
+    } else if (filters?.status === 'out') {
+      products = products.filter((p) => p.quantity === 0);
+    }
+
+    // Ordenação
+    const sortField = filters?.sort || filters?.sortBy;
+    if (sortField === 'price') {
+      products.sort((a, b) => b.price - a.price);
+    } else if (sortField === 'quantity') {
+      products.sort((a, b) => b.quantity - a.quantity);
+    } else {
+      products.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }
+
+    return { products };
   },
 
-  getProductById: async (id: string): Promise<{ product: Product }> => {
-    return request(`/products/${id}`);
+  getProduct: async (id: string): Promise<Product> => {
+    const snap = await getDoc(doc(db, 'products', id));
+    if (!snap.exists()) throw new Error('Produto não encontrado');
+    return { id: snap.id, ...snap.data() } as Product;
   },
 
-  createProduct: async (body: {
-    sku: string;
-    name: string;
-    description?: string;
-    price: number;
-    costPrice: number;
-    quantity: number;
-    minQuantity: number;
-    unit: string;
-    location?: string;
-    categoryId?: string;
-  }): Promise<{ message: string; product: Product }> => {
-    return request('/products', {
-      method: 'POST',
-      body: JSON.stringify(body),
+  getProductById: async (id: string): Promise<Product> => {
+    return inventoryApi.getProduct(id);
+  },
+
+  getStats: async (): Promise<{ stats: InventoryStats }> => {
+    const { products } = await inventoryApi.getProducts();
+    const totalProducts = products.length;
+    const totalItemsInStock = products.reduce((acc, p) => acc + (p.quantity || 0), 0);
+    const totalStockValueCost = products.reduce((acc, p) => acc + (p.costPrice || 0) * (p.quantity || 0), 0);
+    const totalStockValueSale = products.reduce((acc, p) => acc + (p.price || 0) * (p.quantity || 0), 0);
+    const lowStockCount = products.filter((p) => p.quantity > 0 && p.quantity <= (p.minQuantity || 0)).length;
+    const outOfStockCount = products.filter((p) => p.quantity === 0).length;
+
+    return {
+      stats: {
+        totalProducts,
+        totalItemsInStock,
+        totalValue: totalStockValueSale,
+        totalStockValueCost,
+        totalStockValueSale,
+        lowStockCount,
+        outOfStockCount,
+      },
+    };
+  },
+
+  createProduct: async (payload: CreateProductPayload): Promise<Product> => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('Não autenticado');
+
+    const ref = await addDoc(collection(db, 'products'), {
+      ...payload,
+      userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     });
+    return { id: ref.id, ...payload };
   },
 
-  updateProduct: async (
-    id: string,
-    body: Partial<{
-      sku: string;
-      name: string;
-      description?: string;
-      price: number;
-      costPrice: number;
-      minQuantity: number;
-      unit: string;
-      location?: string;
-      categoryId?: string | null;
-    }>
-  ): Promise<{ message: string; product: Product }> => {
-    return request(`/products/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
+  updateProduct: async (id: string, payload: Partial<CreateProductPayload>): Promise<Product> => {
+    const ref = doc(db, 'products', id);
+    await updateDoc(ref, {
+      ...payload,
+      updatedAt: new Date().toISOString(),
     });
+    const updated = await getDoc(ref);
+    return { id: updated.id, ...updated.data() } as Product;
   },
 
-  deleteProduct: async (id: string): Promise<{ message: string }> => {
-    return request(`/products/${id}`, {
-      method: 'DELETE',
-    });
+  deleteProduct: async (id: string): Promise<void> => {
+    await deleteDoc(doc(db, 'products', id));
   },
 
-  // Movimentação de estoque
+  // Movimentações
   recordMovement: async (
     productId: string,
-    body: {
+    payload: {
       type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'LOSS';
       quantity: number;
       reason?: string;
     }
-  ): Promise<{ message: string; movement: StockMovement; product: Product }> => {
-    return request(`/products/${productId}/movement`, {
-      method: 'POST',
-      body: JSON.stringify(body),
+  ): Promise<void> => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('Não autenticado');
+
+    await runTransaction(db, async (transaction) => {
+      const prodRef = doc(db, 'products', productId);
+      const prodSnap = await transaction.get(prodRef);
+      if (!prodSnap.exists()) throw new Error('Produto não encontrado');
+
+      const currentQty = prodSnap.data().quantity || 0;
+      let newQty = currentQty;
+
+      if (payload.type === 'IN') newQty = currentQty + payload.quantity;
+      else if (payload.type === 'OUT' || payload.type === 'LOSS') newQty = currentQty - payload.quantity;
+      else if (payload.type === 'ADJUSTMENT') newQty = payload.quantity;
+
+      if (newQty < 0) throw new Error('Estoque insuficiente para esta saída.');
+
+      transaction.update(prodRef, {
+        quantity: newQty,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const movementRef = doc(collection(db, 'movements'));
+      transaction.set(movementRef, {
+        productId,
+        userId,
+        type: payload.type,
+        quantity: payload.quantity,
+        previousQuantity: currentQty,
+        newQuantity: newQty,
+        reason: payload.reason || '',
+        createdAt: new Date().toISOString(),
+      });
     });
+  },
+
+  getMovements: async (productId: string): Promise<StockMovement[]> => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) return [];
+
+    const snap = await getDocs(query(collection(db, 'movements'), where('productId', '==', productId)));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as StockMovement[];
   },
 };

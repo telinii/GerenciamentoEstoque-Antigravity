@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Layers } from 'lucide-react';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../config/firebase';
-import { authApi } from '../services/api';
-import { useAuthStore } from '../store/auth.store';
+import {
+  GoogleAuthProvider,
+  signInWithPopup,
+  createUserWithEmailAndPassword,
+  updateProfile,
+} from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
 
 const getPasswordStrength = (password: string) => {
   const checks = {
@@ -26,28 +30,40 @@ export default function Register() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
   const strength = getPasswordStrength(password);
 
-  const handleGoogleLogin = async () => {
+  const translateError = (code: string) => {
+    const map: Record<string, string> = {
+      'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
+      'auth/weak-password': 'Senha muito fraca. Use pelo menos 6 caracteres.',
+      'auth/invalid-email': 'E-mail inválido.',
+      'auth/popup-closed-by-user': 'Login cancelado.',
+    };
+    return map[code] || 'Erro ao criar conta. Tente novamente.';
+  };
+
+  const createUserProfile = async (uid: string, userName: string, userEmail: string) => {
+    await setDoc(doc(db, 'users', uid), {
+      name: userName,
+      email: userEmail,
+      role: 'USER',
+      isActive: true,
+      isEmailVerified: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleGoogleRegister = async () => {
     setError('');
     setIsLoading(true);
     try {
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const fbUser = result.user;
-      
-      const data = await authApi.firebaseLogin({
-        email: fbUser.email || '',
-        name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',
-        uid: fbUser.uid
-      });
-
-      setUser(data.user);
+      await signInWithPopup(auth, provider);
+      // onAuthStateChanged no main.tsx cuida de criar o perfil
       navigate('/dashboard');
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Falha ao autenticar com Google');
+      setError(translateError(err.code));
     } finally {
       setIsLoading(false);
     }
@@ -56,31 +72,33 @@ export default function Register() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (strength.score < 2) { setError('Senha muito fraca. Adicione letras maiúsculas e números.'); return; }
     setIsLoading(true);
     try {
-      const data = await authApi.register({ name, email, password });
-      setUser(data.user);
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(cred.user, { displayName: name });
+      await createUserProfile(cred.user.uid, name, email);
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.message);
+      setError(translateError(err.code));
     } finally {
       setIsLoading(false);
     }
   };
 
+  const strengthColors = ['', 'bg-rose-500', 'bg-amber-500', 'bg-blue-500', 'bg-emerald-500'];
+
   return (
-    <div className="min-h-screen bg-[#090a0c] text-zinc-100 flex items-center justify-center px-4 py-10">
+    <div className="min-h-screen bg-[#090a0c] text-zinc-100 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        {/* Header */}
         <div className="mb-8">
           <div className="w-9 h-9 rounded-lg bg-[#17191e] border border-[#23262e] flex items-center justify-center text-zinc-200 mb-4">
             <Layers className="w-4 h-4" />
           </div>
-          <h1 className="text-xl font-semibold text-zinc-100 tracking-tight">Criar nova conta</h1>
-          <p className="text-zinc-400 text-xs mt-1">Comece a gerenciar seu inventário de forma simples e direta.</p>
+          <h1 className="text-xl font-semibold text-zinc-100 tracking-tight">Criar conta</h1>
+          <p className="text-zinc-400 text-xs mt-1">Configure sua conta para começar a gerenciar seu estoque.</p>
         </div>
 
-        {/* Card */}
         <div className="bg-[#111215] border border-[#23262e] rounded-xl p-6 shadow-sm">
           {error && (
             <div className="p-3 bg-rose-950/30 border border-rose-800/40 rounded-lg mb-5 text-rose-400 text-xs">
@@ -127,7 +145,7 @@ export default function Register() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Mínimo 8 caracteres"
+                  placeholder="••••••••"
                   className="form-input pr-10"
                 />
                 <button
@@ -138,62 +156,35 @@ export default function Register() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-
-              {/* Password strength indicator */}
-              {password.length > 0 && (
-                <div className="mt-2.5 space-y-1.5">
+              {password && (
+                <div className="mt-2 space-y-1">
                   <div className="flex gap-1">
                     {[1, 2, 3, 4].map((i) => (
-                      <div
-                        key={i}
-                        className={`h-1 flex-1 rounded-full transition-colors duration-200 ${
-                          i <= strength.score
-                            ? strength.score <= 2
-                              ? 'bg-amber-500'
-                              : 'bg-emerald-500'
-                            : 'bg-[#23262e]'
-                        }`}
-                      />
+                      <div key={i} className={`h-0.5 flex-1 rounded-full transition-colors ${i <= strength.score ? strengthColors[strength.score] : 'bg-[#23262e]'}`} />
                     ))}
                   </div>
-                  <div className="flex justify-between items-center text-[11px] text-zinc-400">
-                    <span>Força: {strength.label}</span>
-                    <span>{password.length >= 8 ? '✓ Mínimo 8 dígitos' : 'Requer 8+ caracteres'}</span>
-                  </div>
+                  <p className="text-[11px] text-zinc-500">Força: <span className="text-zinc-300">{strength.label || '—'}</span></p>
                 </div>
               )}
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading || password.length < 8}
-              className="btn-primary mt-2"
-            >
+            <button type="submit" disabled={isLoading} className="btn-primary mt-2">
               {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Cadastrando...</span>
-                </>
-              ) : (
-                'Criar conta'
-              )}
+                <><Loader2 className="w-4 h-4 animate-spin" /><span>Criando conta...</span></>
+              ) : 'Criar conta'}
             </button>
           </form>
 
-          {/* Divisor */}
           <div className="relative my-4 text-center">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-[#23262e]"></div>
             </div>
-            <span className="relative bg-[#111215] px-2 text-[11px] text-zinc-500 uppercase tracking-wider">
-              ou
-            </span>
+            <span className="relative bg-[#111215] px-2 text-[11px] text-zinc-500 uppercase tracking-wider">ou</span>
           </div>
 
-          {/* Botão Entrar/Cadastrar com Google */}
           <button
             type="button"
-            onClick={handleGoogleLogin}
+            onClick={handleGoogleRegister}
             disabled={isLoading}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#17191e] hover:bg-[#20232a] text-zinc-200 border border-[#23262e] rounded-lg text-xs font-medium transition-colors"
           >
@@ -215,6 +206,8 @@ export default function Register() {
             </p>
           </div>
         </div>
+
+        <p className="text-center text-[11px] text-zinc-600 mt-6">Sessão segura com Firebase Authentication</p>
       </div>
     </div>
   );

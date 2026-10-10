@@ -19,7 +19,8 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuthStore } from '../store/auth.store';
-import { authApi } from '../services/api';
+import { signOut } from 'firebase/auth';
+import { auth } from '../config/firebase';
 import {
   type Product,
   type Category,
@@ -42,6 +43,7 @@ export default function Inventory() {
   const [stats, setStats] = useState<InventoryStats>({
     totalProducts: 0,
     totalItemsInStock: 0,
+    totalValue: 0,
     totalStockValueCost: 0,
     totalStockValueSale: 0,
     lowStockCount: 0,
@@ -52,8 +54,8 @@ export default function Inventory() {
   // Filters
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'all' | 'in_stock' | 'low_stock' | 'out_of_stock'>('all');
-  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'price' | 'updatedAt'>('updatedAt');
+  const [selectedStatus, setSelectedStatus] = useState<'all' | 'low' | 'out'>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'price'>('name');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
 
   // Modals state
@@ -75,9 +77,8 @@ export default function Inventory() {
       const filters: ProductFilters = {
         search: search.trim() || undefined,
         categoryId: selectedCategory !== 'all' ? selectedCategory : undefined,
-        status: selectedStatus,
+        status: selectedStatus === 'all' ? undefined : selectedStatus,
         sortBy,
-        order,
       };
 
       const [productsRes, categoriesRes, statsRes] = await Promise.all([
@@ -101,7 +102,7 @@ export default function Inventory() {
   }, [loadData]);
 
   const handleLogout = async () => {
-    await authApi.logout();
+    await signOut(auth);
     logout();
     navigate('/login');
   };
@@ -403,7 +404,7 @@ export default function Inventory() {
                 ) : (
                   products.map((p) => {
                     const isOutOfStock = p.quantity === 0;
-                    const isLowStock = !isOutOfStock && p.quantity <= p.minQuantity;
+                    const isLowStock = !isOutOfStock && p.quantity <= (p.minQuantity ?? 0);
 
                     return (
                       <tr
@@ -461,10 +462,12 @@ export default function Inventory() {
 
                         {/* Preço de Custo */}
                         <td className="py-3 px-4 text-right font-mono text-zinc-400">
-                          {p.costPrice.toLocaleString('pt-BR', {
-                            style: 'currency',
-                            currency: 'BRL',
-                          })}
+                          {p.costPrice != null
+                            ? p.costPrice.toLocaleString('pt-BR', {
+                                style: 'currency',
+                                currency: 'BRL',
+                              })
+                            : '—'}
                         </td>
 
                         {/* Preço de Venda */}

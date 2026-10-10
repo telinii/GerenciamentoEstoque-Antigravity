@@ -40,9 +40,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setName(productToEdit.name);
       setDescription(productToEdit.description || '');
       setPrice(productToEdit.price.toString());
-      setCostPrice(productToEdit.costPrice.toString());
+      setCostPrice(productToEdit.costPrice?.toString() ?? '0.00');
       setQuantity(productToEdit.quantity.toString());
-      setMinQuantity(productToEdit.minQuantity.toString());
+      setMinQuantity(productToEdit.minQuantity?.toString() ?? '5');
       setUnit(productToEdit.unit || 'UN');
       setLocation(productToEdit.location || '');
       setCategoryId(productToEdit.categoryId || '');
@@ -92,7 +92,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           minQuantity: numMinQuantity,
           unit: unit.trim(),
           location: location.trim() || undefined,
-          categoryId: categoryId || null,
+          categoryId: categoryId || undefined,
         });
       } else {
         await inventoryApi.createProduct({

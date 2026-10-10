@@ -76,7 +76,7 @@ const Employees: React.FC = () => {
     try {
       const res = await employeeApi.getAuditLog(page);
       setAuditLogs(res.logs);
-      setAuditMeta({ total: res.total, pages: res.pages });
+      setAuditMeta({ total: res.meta?.total ?? 0, pages: Math.ceil((res.meta?.total ?? 0) / 20) || 1 });
       setAuditPage(page);
     } catch (err: any) {
       setError(err.message);
@@ -448,8 +448,12 @@ const Employees: React.FC = () => {
                   ) : (
                     safeAuditLogs.map((log) => {
                       if (!log) return null;
-                      let details: Record<string, string> = {};
-                      try { details = JSON.parse(log.details || '{}'); } catch (_) {}
+                      let details: Record<string, unknown> = {};
+                      try {
+                        const d = log.details;
+                        if (typeof d === 'string') details = JSON.parse(d);
+                        else if (d && typeof d === 'object') details = d as Record<string, unknown>;
+                      } catch (_) {}
 
                       return (
                         <tr key={log.id} className="border-b border-[#1a1c21] hover:bg-[#111215] transition-colors">
@@ -460,8 +464,7 @@ const Employees: React.FC = () => {
                           </td>
                           <td className="px-4 py-3">
                             <div>
-                              <span className="text-zinc-200">{log.actor.name}</span>
-                              <p className="text-zinc-500">{log.actor.role}</p>
+                              <span className="text-zinc-200">{log.actorId}</span>
                             </div>
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell text-zinc-400">
@@ -469,7 +472,7 @@ const Employees: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 hidden lg:table-cell text-zinc-500 font-mono">
                             {Object.entries(details).map(([k, v]) => (
-                              <span key={k} className="mr-2">{k}: {v}</span>
+                              <span key={k} className="mr-2">{k}: {String(v)}</span>
                             ))}
                           </td>
                           <td className="px-4 py-3 text-zinc-500">

@@ -24,8 +24,8 @@ export const MovementHistoryModal: React.FC<MovementHistoryModalProps> = ({
     if (!product) return;
     setLoading(true);
     try {
-      const res = await inventoryApi.getProductById(product.id);
-      setMovements(res.product.movements || []);
+      const movs = await inventoryApi.getMovements(product.id);
+      setMovements(movs);
     } catch (err) {
       console.error('Erro ao carregar histórico', err);
     } finally {
@@ -93,7 +93,7 @@ export const MovementHistoryModal: React.FC<MovementHistoryModalProps> = ({
             <div className="space-y-2">
               {movements.map((mov) => {
                 const { icon: Icon, label, color } = getTypeMeta(mov.type);
-                const formattedDate = new Date(mov.createdAt).toLocaleDateString('pt-BR', {
+                const formattedDate = new Date(mov.createdAt || Date.now()).toLocaleDateString('pt-BR', {
                   day: '2-digit', month: '2-digit', year: 'numeric',
                   hour: '2-digit', minute: '2-digit',
                 });

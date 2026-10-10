@@ -1,14 +1,15 @@
 import { useNavigate } from 'react-router-dom';
 import { LogOut, ArrowRight, Package, Lock, Clock, CheckCircle2, Users, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../store/auth.store';
-import { authApi } from '../services/api';
+import { signOut } from 'firebase/auth';
+import { auth } from '../config/firebase';
 
 export default function Dashboard() {
   const { user, logout, hasRole } = useAuthStore();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await authApi.logout();
+    await signOut(auth);
     logout();
     navigate('/login');
   };

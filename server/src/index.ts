@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 
 // Security Middlewares
 app.use(cors({
-  origin: 'http://localhost:5173', // Vite default port
+  origin: ['http://localhost:5173', 'http://localhost:5174'],
   credentials: true
 }));
 

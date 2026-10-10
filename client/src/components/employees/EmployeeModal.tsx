@@ -84,10 +84,8 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       if (isEdit && employee) {
         const payload: UpdateEmployeePayload = {};
         if (name !== employee.name) payload.name = name;
-        if (email !== employee.email) payload.email = email;
         if (role !== employee.role) payload.role = role;
         if (isActive !== employee.isActive) payload.isActive = isActive;
-        if (password) payload.password = password;
         await employeeApi.update(employee.id, payload);
       } else {
         const payload: CreateEmployeePayload = { name, email, password, role };

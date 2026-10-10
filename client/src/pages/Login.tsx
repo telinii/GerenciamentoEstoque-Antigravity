@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Layers } from 'lucide-react';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithEmailAndPassword,
+} from 'firebase/auth';
 import { auth } from '../config/firebase';
-import { authApi } from '../services/api';
 import { useAuthStore } from '../store/auth.store';
 
 export default function Login() {
@@ -13,27 +16,31 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
+  const isLoading_ = useAuthStore((s) => s.isLoading);
+
+  // Traduz erros do Firebase Auth para PT-BR
+  const translateError = (code: string) => {
+    const map: Record<string, string> = {
+      'auth/user-not-found': 'E-mail não encontrado.',
+      'auth/wrong-password': 'Senha incorreta.',
+      'auth/invalid-credential': 'E-mail ou senha inválidos.',
+      'auth/too-many-requests': 'Muitas tentativas. Aguarde e tente novamente.',
+      'auth/user-disabled': 'Conta desativada. Contate o administrador.',
+      'auth/popup-closed-by-user': 'Login cancelado.',
+    };
+    return map[code] || 'Erro ao autenticar. Tente novamente.';
+  };
 
   const handleGoogleLogin = async () => {
     setError('');
     setIsLoading(true);
     try {
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const fbUser = result.user;
-      
-      const data = await authApi.firebaseLogin({
-        email: fbUser.email || '',
-        name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',
-        uid: fbUser.uid
-      });
-
-      setUser(data.user);
+      await signInWithPopup(auth, provider);
+      // onAuthStateChanged no main.tsx vai cuidar do resto
       navigate('/dashboard');
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Falha ao autenticar com Google');
+      setError(translateError(err.code));
     } finally {
       setIsLoading(false);
     }
@@ -44,15 +51,16 @@ export default function Login() {
     setError('');
     setIsLoading(true);
     try {
-      const data = await authApi.login({ email, password });
-      setUser(data.user);
+      await signInWithEmailAndPassword(auth, email, password);
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.message);
+      setError(translateError(err.code));
     } finally {
       setIsLoading(false);
     }
   };
+
+  const loading = isLoading || isLoading_;
 
   return (
     <div className="min-h-screen bg-[#090a0c] text-zinc-100 flex items-center justify-center px-4">
@@ -90,9 +98,7 @@ export default function Login() {
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="password" className="form-label mb-0">Senha</label>
-              </div>
+              <label htmlFor="password" className="form-label">Senha</label>
               <div className="relative">
                 <input
                   id="password"
@@ -114,15 +120,13 @@ export default function Login() {
               </div>
             </div>
 
-            <button type="submit" disabled={isLoading} className="btn-primary mt-2">
-              {isLoading ? (
+            <button type="submit" disabled={loading} className="btn-primary mt-2">
+              {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Entrando...</span>
                 </>
-              ) : (
-                'Entrar'
-              )}
+              ) : 'Entrar'}
             </button>
           </form>
 
@@ -131,16 +135,14 @@ export default function Login() {
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-[#23262e]"></div>
             </div>
-            <span className="relative bg-[#111215] px-2 text-[11px] text-zinc-500 uppercase tracking-wider">
-              ou
-            </span>
+            <span className="relative bg-[#111215] px-2 text-[11px] text-zinc-500 uppercase tracking-wider">ou</span>
           </div>
 
-          {/* Botão Entrar com Google (Firebase Auth) */}
+          {/* Google */}
           <button
             type="button"
             onClick={handleGoogleLogin}
-            disabled={isLoading}
+            disabled={loading}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#17191e] hover:bg-[#20232a] text-zinc-200 border border-[#23262e] rounded-lg text-xs font-medium transition-colors"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -162,9 +164,7 @@ export default function Login() {
           </div>
         </div>
 
-        <p className="text-center text-[11px] text-zinc-600 mt-6">
-          Sessão segura criptografada
-        </p>
+        <p className="text-center text-[11px] text-zinc-600 mt-6">Sessão segura com Firebase Authentication</p>
       </div>
     </div>
   );
