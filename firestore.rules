@@ -1,0 +1,99 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Verifica se o usuário está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: Obtém os dados do documento do usuário logado
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Helper: Verifica se o usuário tem role 'ADMIN' ou 'OWNER'
+    function isAdmin() {
+      return isAuthenticated() && 
+        (getUserData().role == 'ADMIN' || getUserData().role == 'OWNER');
+    }
+
+    // Helper: Usuário comum autenticado
+    function isUser() {
+      return isAuthenticated();
+    }
+
+    // =====================================================================
+    // 1. Coleção de Usuários (/users)
+    // =====================================================================
+    match /users/{userId} {
+      // Qualquer um autenticado pode ler perfis
+      allow read: if isAuthenticated();
+      
+      // Criação inicial do próprio perfil
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+
+      // Usuário comum pode editar apenas seu próprio perfil e NÃO pode alterar seu 'role'
+      allow update: if (isAuthenticated() && request.auth.uid == userId && 
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+                    || isAdmin();
+
+      // Somente admin pode deletar usuários
+      allow delete: if isAdmin();
+    }
+
+    // =====================================================================
+    // 2. Coleção de Produtos (/products)
+    // =====================================================================
+    match /products/{productId} {
+      // Leitura pública/para autenticados
+      allow read: if isAuthenticated();
+
+      // Criação: admin tem acesso total; user normal não cria produtos diretamente sem ser admin/gerente
+      allow create: if isAdmin();
+
+      // Edição:
+      // - Admin: Acesso total a todos os campos
+      // - User Normal: Edição fraca (somente atualizar quantidade ou observações locais, sem alterar SKU ou Preço)
+      allow update: if isAdmin() || (
+        isUser() && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sku', 'costPrice', 'price', 'name'])
+      );
+
+      // Exclusão: Somente Admin tem acesso total
+      allow delete: if isAdmin();
+    }
+
+    // =====================================================================
+    // 3. Coleção de Categorias (/categories)
+    // =====================================================================
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // =====================================================================
+    // 4. Coleção de Movimentações de Estoque (/stockMovements)
+    // =====================================================================
+    match /stockMovements/{movementId} {
+      allow read: if isAuthenticated();
+      // Qualquer usuário autenticado pode registrar movimentação (auditável)
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Movimentações são registros imutáveis (auditoria) - apenas admin pode ajustar se necessário
+      allow update, delete: if isAdmin();
+    }
+
+    // =====================================================================
+    // 5. Coleção de Auditoria (/auditLogs)
+    // =====================================================================
+    match /auditLogs/{logId} {
+      // Apenas Admin pode ler logs de auditoria
+      allow read: if isAdmin();
+      // Qualquer ação autenticada pode gravar log
+      allow create: if isAuthenticated();
+      // Logs são estritamente imutáveis
+      allow update, delete: if false;
+    }
+  }
+}
